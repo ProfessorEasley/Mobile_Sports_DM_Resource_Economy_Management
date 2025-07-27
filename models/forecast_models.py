@@ -17,3 +17,7 @@ class ForecastResponse(BaseModel):
     expenses: int
     net_change: int
     balance: int
+
+class Response(BaseModel):
+    forecast: list[ForecastResponse]
+    alerts: list[str] = []
