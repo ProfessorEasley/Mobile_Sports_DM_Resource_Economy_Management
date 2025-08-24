@@ -1,0 +1,149 @@
+{
+    "title": "FMG Audit Log Entry",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "id",
+      "ts",
+      "player_id",
+      "currency",
+      "action",
+      "amount",
+      "balance_before",
+      "balance_after",
+      "source",
+      "meta"
+    ],
+    "properties": {
+      "id": {
+        "description": "Unique identifier for this log entry",
+        "type": "string",
+        "format": "uuid"
+      },
+      "correlation_id": {
+        "description": "Correlates multiple log entries in one higher-level operation (e.g., salary run).",
+        "type": "string",
+        "format": "uuid"
+      },
+      "session_id": {
+        "description": "Local gameplay session identifier (offline).",
+        "type": "string"
+      },
+      "ts": {
+        "description": "Timestamp in ISO 8601 (UTC).",
+        "type": "string",
+        "format": "date-time"
+      },
+      "player_id": {
+        "description": "Player identifier.",
+        "type": "string",
+        "minLength": 1
+      },
+      "currency": {
+        "description": "Impacted currency type.",
+        "type": "string",
+        "enum": ["Soft", "Premium", "Utility", "CoachingCredit"]
+      },
+      "action": {
+        "description": "Economic action performed.",
+        "type": "string",
+        "enum": ["EARN", "SPEND", "TRANSFER_IN", "TRANSFER_OUT", "ADJUST"]
+      },
+      "amount": {
+        "description": "Non-negative amount for the action.",
+        "type": "number",
+        "minimum": 0
+      },
+      "balance_before": {
+        "description": "Balance immediately before applying the action.",
+        "type": "number"
+      },
+      "balance_after": {
+        "description": "Balance immediately after applying the action (after cap/rollback).",
+        "type": "number"
+      },
+      "source": {
+        "description": "Originating subsystem for this event.",
+        "type": "string",
+        "enum": ["WalletSystem", "SalaryEngine", "ContractSystem", "BonusSystem", "AdminTool", "TestHarness"]
+      },
+      "reason": {
+        "description": "Human-readable reason or category (e.g., match-win, daily-login).",
+        "type": "string"
+      },
+      "meta": {
+        "description": "Freeform metadata for analytics; MUST be JSON-serializable.",
+        "type": "object",
+        "additionalProperties": true
+      },
+  
+      "cap_info": {
+        "description": "Present when CoachingCredit (or other capped currency) was capped.",
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["cap_reached", "cap_value", "excess_amount_discarded"],
+        "properties": {
+          "cap_reached": { "type": "boolean" },
+          "cap_value": { "type": "number", "minimum": 0 },
+          "excess_amount_discarded": { "type": "number", "minimum": 0 }
+        }
+      },
+  
+      "rollback": {
+        "description": "Rollback context if the operation failed and was reverted locally.",
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["applied"],
+        "properties": {
+          "applied": { "type": "boolean" },
+          "reason": { "type": "string" },
+          "prev_state_hash": {
+            "description": "Hash of prior persisted state (for forensic cross-checks).",
+            "type": "string"
+          }
+        }
+      },
+  
+      "integrity": {
+        "description": "Optional write-integrity info for offline persistence.",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "file_seq": { "type": "integer", "minimum": 0 },
+          "checksum": { "type": "string" },
+          "schema_version": { "type": "string", "pattern": "^v\\d+\\.\\d+\\.\\d+$" }
+        }
+      }
+    },
+    "allOf": [
+      {
+        "if": { "properties": { "currency": { "const": "CoachingCredit" } } },
+        "then": {
+          "properties": {
+            "cap_info": { "type": "object" }
+          }
+        }
+      }
+    ],
+    "examples": [
+      {
+        "id": "d8f5b9b6-6b6b-4c6e-a7d1-0d6a9c2f7c2a",
+        "correlation_id": "a2f7c7f4-8cf6-4a6c-9a2f-6c0a1e4c9f10",
+        "session_id": "sess_2025-08-24_17-10-02",
+        "ts": "2025-08-24T00:10:02Z",
+        "player_id": "player_014",
+        "currency": "CoachingCredit",
+        "action": "EARN",
+        "amount": 15,
+        "balance_before": 95,
+        "balance_after": 100,
+        "source": "BonusSystem",
+        "reason": "WeeklyPerformance",
+        "meta": { "match_id": "M-99123", "week": 1 },
+        "cap_info": { "cap_reached": true, "cap_value": 100, "excess_amount_discarded": 10 },
+        "rollback": { "applied": false },
+        "integrity": { "file_seq": 1024, "checksum": "sha256:...", "schema_version": "v1.0.0" }
+      }
+    ]
+  }
+  
