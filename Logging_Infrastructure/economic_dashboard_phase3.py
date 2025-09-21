@@ -11,6 +11,9 @@ import os
 from logger_function import log_transaction, PlayerWallet
 
 
+TRACKED_CURRENCIES = ("coins", "gems", "credits")
+
+
 class AlertLevel(Enum):
     """Alert severity levels for economic warnings"""
     INFO = "INFO"
@@ -59,107 +62,136 @@ class EconomicMetrics:
     
     def track_transaction(self, transaction_data: dict):
         """Track individual transactions for analytics"""
-        currency_type = transaction_data.get("currency_type")
-        amount = transaction_data.get("amount", 0)
+
+        currency = str(transaction_data.get("currency", "")).lower()
+        if currency not in TRACKED_CURRENCIES:
+            return
+
+        amount = int(transaction_data.get("amount", 0))
         player_id = transaction_data.get("player_id")
-        transaction_type = transaction_data.get("transaction_type")
-        
-        self.transaction_history[currency_type].append({
-            "timestamp": datetime.now().isoformat(),
-            "player_id": player_id,
-            "amount": amount,
-            "type": transaction_type,
-            "source_sink": transaction_data.get("source_sink")
-        })
-        
-        if transaction_type == "Earn":
-            self.resource_distribution[currency_type][player_id] += abs(amount)
-        elif transaction_type == "Spend":
-            self.resource_distribution[currency_type][player_id] -= abs(amount)
-        
+        transaction_type = str(transaction_data.get("type", "")).lower()
+
+        self.transaction_history[currency].append(
+            {
+                "timestamp": datetime.now().isoformat(),
+                "player_id": player_id,
+                "amount": amount,
+                "type": transaction_type,
+                "source": transaction_data.get("source"),
+            }
+        )
+
+        if transaction_type == "earn":
+            self.resource_distribution[currency][player_id] = (
+                self.resource_distribution[currency].get(player_id, 0) + abs(amount)
+            )
+        elif transaction_type == "spend":
+            self.resource_distribution[currency][player_id] = (
+                self.resource_distribution[currency].get(player_id, 0) - abs(amount)
+            )
+
         # Store transaction locally every 10 transactions
-        if len(self.transaction_history[currency_type]) % 10 == 0:
-            self.store_data_locally(f"transactions_{currency_type}", 
-                                   {"transactions": self.transaction_history[currency_type][-10:]})
+        if len(self.transaction_history[currency]) % 10 == 0:
+            self.store_data_locally(
+                f"transactions_{currency}",
+                {"transactions": self.transaction_history[currency][-10:]},
+            )
     
-    def calculate_weekly_delta(self, currency_type: str, week_number: int) -> float:
+    def calculate_weekly_delta(self, currency: str, week_number: int) -> float:
         """Calculate the weekly change in currency circulation"""
-        week_transactions = [t for t in self.transaction_history[currency_type]
+        currency = {
+            "soft": "coins",
+            "premium": "gems",
+            "coachingcredit": "credits",
+            "utility": "credits",
+        }.get(currency.lower(), currency.lower())
+
+        if currency not in TRACKED_CURRENCIES:
+            return 0.0
+
+        week_transactions = [t for t in self.transaction_history[currency]
                            if self._get_week_number(t["timestamp"]) == week_number]
-        
-        total_earned = sum(abs(t["amount"]) for t in week_transactions if t["type"] == "Earn")
-        total_spent = sum(abs(t["amount"]) for t in week_transactions if t["type"] == "Spend")
-        
+
+        total_earned = sum(abs(t["amount"]) for t in week_transactions if t["type"] == "earn")
+        total_spent = sum(abs(t["amount"]) for t in week_transactions if t["type"] == "spend")
+
         delta = total_earned - total_spent
-        self.weekly_deltas[week_number][currency_type] = delta
-        
+        self.weekly_deltas[week_number][currency] = delta
+
         # Store weekly delta locally
-        self.store_data_locally(f"weekly_delta_w{week_number}", 
+        self.store_data_locally(f"weekly_delta_w{week_number}",
                                {"week": week_number, "deltas": dict(self.weekly_deltas[week_number])})
-        
+
         return delta
-    
-    def detect_inflation(self, currency_type: str, lookback_weeks: int = 4) -> Tuple[bool, float]:
+
+    def detect_inflation(self, currency: str, lookback_weeks: int = 4) -> Tuple[bool, float]:
         """
         Detect inflation in a specific currency type
         Returns: (is_inflated, inflation_rate)
         """
+        currency = {
+            "soft": "coins",
+            "premium": "gems",
+            "coachingcredit": "credits",
+            "utility": "credits",
+        }.get(currency.lower(), currency.lower())
+
         if len(self.weekly_deltas) < lookback_weeks:
             return False, 0.0
-        
+
         recent_weeks = sorted(self.weekly_deltas.keys())[-lookback_weeks:]
-        deltas = [self.weekly_deltas[week][currency_type] for week in recent_weeks]
-        
+        deltas = [self.weekly_deltas[week].get(currency, 0) for week in recent_weeks]
+
         if not deltas or deltas[0] == 0:
             return False, 0.0
-        
+
         inflation_rate = (deltas[-1] - deltas[0]) / abs(deltas[0]) if deltas[0] != 0 else 0
-        
+
         # Track inflation rate
-        self.inflation_rates[currency_type].append({
+        self.inflation_rates[currency].append({
             "timestamp": datetime.now().isoformat(),
             "rate": inflation_rate,
             "weeks_analyzed": lookback_weeks
         })
-        
-        if len(self.inflation_rates[currency_type]) > 100:
-            self.inflation_rates[currency_type].popleft()
-        
+
+        if len(self.inflation_rates[currency]) > 100:
+            self.inflation_rates[currency].popleft()
+
         is_inflated = inflation_rate > self.inflation_threshold
-        
+
         if is_inflated:
             self._create_alert(
                 AlertLevel.WARNING,
-                f"Inflation detected in {currency_type}",
-                {"currency": currency_type, "rate": inflation_rate, "threshold": self.inflation_threshold}
+                f"Inflation detected in {currency}",
+                {"currency": currency, "rate": inflation_rate, "threshold": self.inflation_threshold}
             )
-        
+
         return is_inflated, inflation_rate
-    
-    def mitigate_inflation(self, currency_type: str) -> dict:
+
+    def mitigate_inflation(self, currency: str) -> dict:
         """
         Suggest and implement inflation mitigation strategies
         """
         mitigation_strategies = []
-        
-        is_inflated, rate = self.detect_inflation(currency_type)
-        
+
+        is_inflated, rate = self.detect_inflation(currency)
+
         if is_inflated:
             if rate > 0.3:
                 mitigation_strategies.append({
                     "action": "reduce_earn_rates",
                     "target_reduction": 0.2,
-                    "affected_sources": ["DailyLoginBonus", "WeeklyChallengeReward"],
+                    "affected_sources": ["daily_login_bonus", "weekly_challenge_reward"],
                     "priority": "HIGH"
                 })
-            
-            mitigation_strategies.append({
-                "action": "increase_sinks",
-                "suggested_sinks": ["Premium_Shop_Items", "Upgrade_Costs"],
-                "target_increase": 0.15,
-                "priority": "MEDIUM"
-            })
-            
+
+                mitigation_strategies.append({
+                    "action": "increase_sinks",
+                    "suggested_sinks": ["gem_shop_items", "upgrade_costs"],
+                    "target_increase": 0.15,
+                    "priority": "MEDIUM"
+                })
+
             if rate > 0.5:
                 mitigation_strategies.append({
                     "action": "temporary_earning_caps",
@@ -174,9 +206,9 @@ class EconomicMetrics:
             "strategies": mitigation_strategies,
             "timestamp": datetime.now().isoformat()
         }
-        
-        self.store_data_locally(f"mitigation_plan_{currency_type}", mitigation_plan)
-        
+
+        self.store_data_locally(f"mitigation_plan_{currency}", mitigation_plan)
+
         return mitigation_plan
     
     def generate_resource_scarcity_heatmap(self) -> dict:
@@ -306,9 +338,9 @@ class EconomicMetrics:
         """Define and monitor economic pressure thresholds"""
         thresholds = {
             "bankruptcy_risk": {
-                "soft_currency": 100,
-                "premium_currency": 0,
-                "coaching_credits": 5
+                "coins": 100,
+                "gems": 5,
+                "credits": 5,
             },
             "inflation_warning": {
                 "rate": 0.15,
@@ -340,7 +372,7 @@ class EconomicMetrics:
                 })
         
         # Check inflation
-        for currency in ["Soft", "Premium", "Utility", "CoachingCredit"]:
+        for currency in TRACKED_CURRENCIES:
             is_inflated, rate = self.detect_inflation(currency)
             if rate > thresholds["inflation_warning"]["critical"]:
                 warnings.append({
@@ -417,7 +449,7 @@ class EconomicMetrics:
             "recommendations": []
         }
         
-        for currency in ["Soft", "Premium", "Utility", "CoachingCredit"]:
+        for currency in TRACKED_CURRENCIES:
             is_inflated, rate = self.detect_inflation(currency)
             summary["economic_health"]["inflation_rates"][currency] = {
                 "rate": rate,
@@ -451,41 +483,67 @@ class EconomicMonitoringSystem:
         self.wallets = {}  
         
     def create_player_wallet(self, player_id: str, **initial_balances) -> PlayerWallet:
-        """Create and register a new player wallet"""
-        wallet = PlayerWallet(player_id, **initial_balances)
-        self.wallets[player_id] = wallet
+        """Create and register a new player wallet."""
+
+        coins = int(initial_balances.pop("initial_coins", initial_balances.pop("initial_soft", 0)))
+        gems = int(initial_balances.pop("initial_gems", initial_balances.pop("initial_premium", 0)))
+        credits = int(initial_balances.pop("initial_credits", initial_balances.pop("initial_coaching_credits", 0)))
+        credits_cap = int(initial_balances.pop("credits_cap", initial_balances.pop("coaching_credit_cap", 100)))
+
+        wallet = PlayerWallet(
+            player_id,
+            initial_coins=coins,
+            initial_gems=gems,
+            initial_credits=credits,
+            credits_cap=credits_cap,
+        )
+        self.wallets[wallet.player_id] = wallet
         return wallet
-    
-    def process_transaction(self, player_id: str, currency_type: str, 
-                           amount: float, source_sink: str, 
-                           context_data: dict = None) -> bool:
-        """Process a transaction and update metrics"""
+
+    def process_transaction(
+        self,
+        player_id: str,
+        currency: str,
+        amount: int,
+        source: str,
+        context: dict | None = None,
+    ) -> bool:
+        """Process a transaction and update metrics."""
+
         if player_id not in self.wallets:
             print(f"Error: Player {player_id} not found")
             return False
-        
+
         wallet = self.wallets[player_id]
-        
-        # Process transaction
+        amount = int(amount)
+
+        legacy_map = {
+            "soft": "coins",
+            "premium": "gems",
+            "coachingcredit": "credits",
+            "utility": "credits",
+        }
+        currency = legacy_map.get(currency.lower(), currency.lower())
+
         if amount > 0:
-            success = wallet.add_currency(currency_type, amount, source_sink, context_data)
+            success = wallet.add_currency(currency, amount, source, context)
         else:
-            success = wallet.spend_currency(currency_type, abs(amount), source_sink, context_data)
-        
+            success = wallet.spend_currency(currency, abs(amount), source, context)
+
         if success:
             transaction_data = {
                 "player_id": player_id,
-                "currency_type": currency_type,
+                "currency": currency.lower(),
                 "amount": amount,
-                "transaction_type": "Earn" if amount > 0 else "Spend",
-                "source_sink": source_sink,
-                "context_data": context_data
+                "type": "earn" if amount > 0 else "spend",
+                "source": source,
+                "context": context,
             }
             self.metrics.track_transaction(transaction_data)
-            
-            # Update resource distribution
-            self.metrics.resource_distribution[currency_type][player_id] = wallet.get_balance(currency_type)
-        
+
+            # Update resource distribution snapshot
+            self.metrics.resource_distribution[currency.lower()][player_id] = wallet.get_balance(currency)
+
         return success
     
     def apply_contract_bonus(self, player_id: str, bonus_type: str, 
@@ -502,9 +560,11 @@ class EconomicMonitoringSystem:
         
         # Apply bonusu if availiable
         success = self.process_transaction(
-            player_id, "Soft", bonus_amount, 
-            f"ContractBonus_{bonus_type}",
-            {"multiplier": performance_multiplier, "base": base_amount}
+            player_id,
+            "coins",
+            int(bonus_amount),
+            f"contract_bonus_{bonus_type}",
+            {"multiplier": performance_multiplier, "base": base_amount},
         )
         
         return bonus_amount if success else 0
@@ -527,7 +587,7 @@ class EconomicMonitoringSystem:
         }
         
         # Calculate weekly deltas for all currencies
-        for currency in ["Soft", "Premium", "Utility", "CoachingCredit"]:
+        for currency in TRACKED_CURRENCIES:
             delta = self.metrics.calculate_weekly_delta(currency, week_number)
             analysis["deltas"][currency] = delta
             print(f"\n{currency} Weekly Delta: {delta:+.2f}")
@@ -580,50 +640,52 @@ def run_integration_tests():
     
     # test players
     players = [
-        monitor.create_player_wallet(f"player_{i}", 
-                                    initial_soft=1000 + i*100,
-                                    initial_premium=50 + i*5,
-                                    initial_utility=10,
-                                    initial_coaching_credits=20 + i*2)
+        monitor.create_player_wallet(
+            str(uuid.uuid4()),
+            initial_coins=1000 + i * 100,
+            initial_gems=50 + i * 5,
+            initial_credits=20 + i * 2,
+            credits_cap=150,
+        )
         for i in range(10)
     ]
+    player_ids = [wallet.player_id for wallet in players]
     
     print("\n✅ Created 10 test player wallets")
     
     print("\n📅 SIMULATING WEEK 1 TRANSACTIONS...")
     
-    for i, player in enumerate(players[:7]):  
-        monitor.process_transaction(f"player_{i}", "Soft", 100, "DailyLoginBonus", {"day": 1})
-    
-    monitor.process_transaction("player_0", "Premium", -10, "CosmeticPurchase", {"item": "Hat"})
-    monitor.process_transaction("player_1", "Soft", -500, "PlayerUpgrade", {"upgrade": "Speed"})
+    for player_id in player_ids[:7]:
+        monitor.process_transaction(player_id, "coins", 100, "daily_login_bonus", {"day": 1})
+
+    monitor.process_transaction(player_ids[0], "gems", -10, "cosmetic_purchase", {"item": "Hat"})
+    monitor.process_transaction(player_ids[1], "coins", -500, "player_upgrade", {"upgrade": "Speed"})
     
     for i in range(5):
-        monitor.apply_contract_bonus(f"player_{i}", "WeeklyPerformance", 
-                                    200, 1.0 + i * 0.1)
+        monitor.apply_contract_bonus(player_ids[i], "weekly_performance", 200, 1.0 + i * 0.1)
     
     week1_analysis = monitor.run_weekly_analysis(1)
     
     print("\n📅 SIMULATING WEEK 2 - INFLATION SCENARIO...")
     
-    for i in range(10):
-        monitor.process_transaction(f"player_{i}", "Soft", 500, "EventReward", {"event": "Special"})
-        monitor.process_transaction(f"player_{i}", "Soft", 300, "QuestCompletion", {"quest": "Main"})
-    
-    monitor.process_transaction("player_2", "Soft", -100, "MinorPurchase", {})
+    for player_id in player_ids:
+        monitor.process_transaction(player_id, "coins", 500, "event_reward", {"event": "Special"})
+        monitor.process_transaction(player_id, "coins", 300, "quest_completion", {"quest": "Main"})
+
+    monitor.process_transaction(player_ids[2], "coins", -100, "minor_purchase", {})
     
     week2_analysis = monitor.run_weekly_analysis(2)
     
     print("\n📅 SIMULATING WEEK 3 - SCARCITY SCENARIO...")
     
-    for i in range(3, 8):
-        monitor.process_transaction(f"player_{i}", "Soft", -800, "MajorPurchase", {"item": "Exclusive"})
-    
-    for i in range(10):
-        monitor.process_transaction(f"player_{i}", "Soft", 50, "DailyLoginBonus", {"day": 15})
-    
-    # Test coaching credit cap
-    monitor.process_transaction("player_0", "CoachingCredit", 90, "AchievementReward", {})
+    for idx in range(3, 8):
+        monitor.process_transaction(player_ids[idx], "coins", -800, "major_purchase", {"item": "Exclusive"})
+
+    for player_id in player_ids:
+        monitor.process_transaction(player_id, "coins", 50, "daily_login_bonus", {"day": 15})
+
+    # Test credits cap
+    monitor.process_transaction(player_ids[0], "credits", 90, "achievement_reward", {})
     
     week3_analysis = monitor.run_weekly_analysis(3)
     

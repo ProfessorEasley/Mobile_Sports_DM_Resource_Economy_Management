@@ -1,4 +1,7 @@
-from models.forecast_models import ForecastResponse
+from typing import List
 
-def to_response_model(data: list[dict]) -> list[ForecastResponse]:
-    return [ForecastResponse(**item) for item in data]
+from models.forecast_models import ForecastEntry
+
+
+def to_response_model(data: list[dict]) -> List[ForecastEntry]:
+    return [ForecastEntry(**item) for item in data]

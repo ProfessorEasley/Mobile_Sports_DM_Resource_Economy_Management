@@ -1,6 +1,7 @@
 import json
 import os
 import shutil
+import uuid
 from datetime import datetime
 from typing import Dict, List, Optional
 import copy
@@ -189,97 +190,142 @@ class IntegratedEconomicSystem:
         
         self.load_game()
     
-    def create_player(self, player_id: str, initial_soft: float = 1000, 
-                     initial_premium: float = 50, initial_utility: float = 10,
-                     initial_credits: float = 20) -> dict:
-        """Create a new player with initial resources"""
-        
-        self.wallets[player_id] = {
-            "Soft": initial_soft,
-            "Premium": initial_premium,
-            "Utility": initial_utility,
-            "CoachingCredit": initial_credits,
-            "coaching_credit_cap": 100,
-            "created_at": datetime.now().isoformat()
+    def _normalize_player_id(self, player_id: str) -> str:
+        """Ensure player IDs conform to UUID string format."""
+
+        try:
+            return str(uuid.UUID(str(player_id)))
+        except (ValueError, TypeError):
+            generated_id = str(uuid.uuid4())
+            print(f"⚠️ Provided player_id '{player_id}' invalid; generated {generated_id} instead")
+            return generated_id
+
+    def create_player(
+        self,
+        player_id: str,
+        initial_coins: int = 1000,
+        initial_gems: int = 50,
+        initial_credits: int = 20,
+        credits_cap: int = 100,
+    ) -> dict:
+        """Create a new player with initial resources."""
+
+        normalized_id = self._normalize_player_id(player_id)
+        self.wallets[normalized_id] = {
+            "player_id": normalized_id,
+            "current_balances": {
+                "coins": int(initial_coins),
+                "gems": int(initial_gems),
+                "credits": int(initial_credits),
+            },
+            "max_capacities": {
+                "coins": int(initial_coins) * 10,
+                "gems": int(initial_gems) * 10,
+                "credits": int(credits_cap),
+            },
+            "earn_rates": {
+                "coins_per_hour": 0,
+                "gems_per_day": 0,
+                "credits_per_week": 0,
+            },
+            "created_at": datetime.now().isoformat(),
         }
-        
-        print(f"👤 Created player: {player_id}")
+
+        print(f"👤 Created player: {normalized_id}")
         self._auto_save()
-        return self.wallets[player_id]
+        return self.wallets[normalized_id]
     
-    def process_transaction(self, player_id: str, currency_type: str, 
-                           amount: float, source_sink: str, 
-                           context_data: dict = None,
-                           allow_rollback: bool = True) -> bool:
+    def process_transaction(
+        self,
+        player_id: str,
+        currency: str,
+        amount: int,
+        source: str,
+        context: dict | None = None,
+        allow_rollback: bool = True,
+    ) -> bool:
         """
         Process a transaction with automatic save and optional rollback.
         
         Args:
             player_id: Player identifier
-            currency_type: Type of currency
+            currency: Type of currency
             amount: Amount (positive for earn, negative for spend)
-            source_sink: Source or sink identifier
-            context_data: Additional context
+            source: Origin of transaction
+            context: Additional context data
             allow_rollback: Whether to create a rollback point
-        
+
         Returns:
             Success status
         """
-        
-        if player_id not in self.wallets:
-            print(f"❌ Player {player_id} not found")
+
+        normalized_id = self._normalize_player_id(player_id)
+        if normalized_id not in self.wallets:
+            print(f"❌ Player {normalized_id} not found")
             return False
-        
+
         if allow_rollback:
             self.state_manager.save_game_state(self._get_game_state(), create_backup=True)
-        
-        current_balance = self.wallets[player_id][currency_type]
-        
-        transaction_type = "Earn" if amount > 0 else "Spend"
-        actual_amount = abs(amount)
-        
-        if transaction_type == "Spend" and current_balance < actual_amount:
-            print(f"❌ Insufficient {currency_type} for {player_id}")
-            self._log_failed_transaction(player_id, currency_type, amount, source_sink, "InsufficientFunds")
+
+        wallet = self.wallets[normalized_id]
+        balances = wallet["current_balances"]
+        currency = currency.lower()
+        currency = {
+            "soft": "coins",
+            "premium": "gems",
+            "coachingcredit": "credits",
+            "utility": "credits",
+        }.get(currency, currency)
+
+        if currency not in balances:
+            print(f"❌ Unsupported currency '{currency}' for {normalized_id}")
+            self._log_failed_transaction(normalized_id, currency, amount, source, "UnsupportedCurrency")
             return False
-        
-        if transaction_type == "Earn" and currency_type == "CoachingCredit":
-            cap = self.wallets[player_id].get("coaching_credit_cap", 100)
-            new_balance = current_balance + actual_amount
-            if new_balance > cap:
-                actual_amount = cap - current_balance
-                if actual_amount <= 0:
-                    print(f"⚠️ {player_id} already at CoachingCredit cap")
+
+        amount = int(amount)
+        transaction_type = "earn" if amount > 0 else "spend"
+        delta = abs(amount)
+
+        current_balance = int(balances[currency])
+        if transaction_type == "spend" and current_balance < delta:
+            print(f"❌ Insufficient {currency} for {normalized_id}")
+            self._log_failed_transaction(normalized_id, currency, amount, source, "InsufficientFunds")
+            return False
+
+        if transaction_type == "earn" and currency == "credits":
+            cap = int(wallet["max_capacities"]["credits"])
+            potential_balance = current_balance + delta
+            if potential_balance > cap:
+                delta = max(cap - current_balance, 0)
+                if delta == 0:
+                    print(f"⚠️ {normalized_id} already at credits cap")
                     return False
-        
-        if transaction_type == "Earn":
-            self.wallets[player_id][currency_type] += actual_amount
-        else:
-            self.wallets[player_id][currency_type] -= actual_amount
-        
+
+        signed_delta = delta if transaction_type == "earn" else -delta
+        balances[currency] = current_balance + signed_delta
+
         transaction_data = {
-            "transaction_id": f"txn_{datetime.now().strftime('%Y%m%d%H%M%S')}_{self.metrics['total_transactions']}",
+            "transaction_id": str(uuid.uuid4()),
             "timestamp": datetime.now().isoformat(),
-            "player_id": player_id,
-            "currency_type": currency_type,
-            "amount": amount,
-            "actual_amount": actual_amount if transaction_type == "Earn" else -actual_amount,
-            "transaction_type": transaction_type,
-            "source_sink": source_sink,
-            "context_data": context_data or {},
-            "balance_after": self.wallets[player_id][currency_type]
+            "player_id": normalized_id,
+            "currency": currency,
+            "type": transaction_type,
+            "amount": signed_delta,
+            "source": source,
+            "context": context or {},
+            "new_balance": int(balances[currency]),
         }
-        
+
         self.state_manager.log_transaction(transaction_data)
         self.metrics["total_transactions"] += 1
-        
-        print(f"✅ {transaction_type}: {player_id} - {actual_amount} {currency_type} ({source_sink})")
-        print(f"   New balance: {self.wallets[player_id][currency_type]}")
-        
+
+        print(f"✅ {transaction_type.upper()}: {normalized_id} - {abs(signed_delta)} {currency} ({source})")
+        print(f"   New balance: {balances[currency]}")
+
         self._auto_save()
-        
+
         return True
-    
+
     def rollback_last_transaction(self) -> bool:
         """Rollback the last transaction"""
         if self.state_manager.rollback_to_previous_state():
@@ -287,21 +333,20 @@ class IntegratedEconomicSystem:
             return True
         return False
     
-    def _log_failed_transaction(self, player_id: str, currency_type: str, 
-                               amount: float, source_sink: str, reason: str):
+    def _log_failed_transaction(self, player_id: str, currency: str, amount: int, source: str, reason: str):
         """Log a failed transaction attempt"""
         transaction_data = {
-            "transaction_id": f"failed_{datetime.now().strftime('%Y%m%d%H%M%S')}",
+            "transaction_id": str(uuid.uuid4()),
             "timestamp": datetime.now().isoformat(),
             "player_id": player_id,
-            "currency_type": currency_type,
-            "amount": amount,
-            "transaction_type": "FAILED",
-            "source_sink": source_sink,
-            "failure_reason": reason
+            "currency": currency,
+            "type": "failed",
+            "amount": int(amount),
+            "source": source,
+            "context": {"failure_reason": reason}
         }
         self.state_manager.log_transaction(transaction_data)
-    
+
     def _get_game_state(self) -> dict:
         """Get the complete game state for saving"""
         return {
@@ -310,7 +355,7 @@ class IntegratedEconomicSystem:
             "timestamp": datetime.now().isoformat(),
             "version": "1.0"
         }
-    
+
     def _auto_save(self):
         """Automatically save the game state"""
         self.state_manager.save_game_state(self._get_game_state(), create_backup=False)
@@ -344,10 +389,11 @@ class IntegratedEconomicSystem:
     
     def get_player_balance(self, player_id: str) -> dict:
         """Get all balances for a player"""
-        if player_id not in self.wallets:
+        normalized_id = self._normalize_player_id(player_id)
+        if normalized_id not in self.wallets:
             return {}
-        return self.wallets[player_id].copy()
-    
+        return copy.deepcopy(self.wallets[normalized_id])
+
     def get_all_players(self) -> list:
         """Get list of all player IDs"""
         return list(self.wallets.keys())
@@ -362,25 +408,26 @@ class IntegratedEconomicSystem:
             print("No players in the economy")
             return
         
-        totals = {"Soft": 0, "Premium": 0, "Utility": 0, "CoachingCredit": 0}
+        totals = {"coins": 0, "gems": 0, "credits": 0}
         for player_data in self.wallets.values():
+            balances = player_data.get("current_balances", {})
             for currency in totals:
-                totals[currency] += player_data.get(currency, 0)
-        
+                totals[currency] += balances.get(currency, 0)
+
         print(f"\n📊 Total Players: {len(self.wallets)}")
         print(f"📈 Total Transactions: {self.metrics['total_transactions']}")
-        
+
         print("\n💰 Currency Totals:")
         for currency, total in totals.items():
             avg = total / len(self.wallets) if self.wallets else 0
-            print(f"  {currency}: {total:.0f} (avg: {avg:.1f})")
-        
+            print(f"  {currency}: {int(total)} (avg: {avg:.1f})")
+
         print("\n👥 Player Balances:")
-        for player_id in list(self.wallets.keys())[:5]:  
-            balances = self.wallets[player_id]
+        for player_id in list(self.wallets.keys())[:5]:
+            balances = self.wallets[player_id]["current_balances"]
             print(f"  {player_id}:")
-            for currency in ["Soft", "Premium", "Utility", "CoachingCredit"]:
-                print(f"    {currency}: {balances.get(currency, 0):.0f}")
+            for currency in ["coins", "gems", "credits"]:
+                print(f"    {currency}: {balances.get(currency, 0)}")
         
         if len(self.wallets) > 5:
             print(f"  ... and {len(self.wallets) - 5} more players")
@@ -400,22 +447,36 @@ def run_example_scenario():
     print("\n📌 SCENARIO 1: Creating Players")
     print("-"*40)
     
-    game.create_player("player_001", initial_soft=1000, initial_premium=50)
-    game.create_player("player_002", initial_soft=1500, initial_premium=75)
-    game.create_player("player_003", initial_soft=800, initial_premium=30)
+    player_1 = str(uuid.uuid4())
+    player_2 = str(uuid.uuid4())
+    player_3 = str(uuid.uuid4())
+
+    game.create_player(player_1, initial_coins=1000, initial_gems=50, initial_credits=25)
+    game.create_player(player_2, initial_coins=1500, initial_gems=75, initial_credits=30)
+    game.create_player(player_3, initial_coins=800, initial_gems=30, initial_credits=15)
     
     # Scenario 2: Process transactions
     print("\n📌 SCENARIO 2: Processing Transactions")
     print("-"*40)
     
-    game.process_transaction("player_001", "Soft", 100, "DailyLoginBonus")
-    game.process_transaction("player_002", "Soft", 100, "DailyLoginBonus")
-    
-    game.process_transaction("player_001", "Premium", -10, "CosmeticPurchase", 
-                            {"item": "Golden Hat"})
+    game.process_transaction(player_1, "coins", 100, "daily_login_bonus")
+    game.process_transaction(player_2, "coins", 100, "daily_login_bonus")
 
-    game.process_transaction("player_002", "Soft", 250, "QuestCompletion",
-                            {"quest_id": "main_quest_01"})
+    game.process_transaction(
+        player_1,
+        "gems",
+        -10,
+        "cosmetic_purchase",
+        {"item": "Golden Hat"},
+    )
+
+    game.process_transaction(
+        player_2,
+        "coins",
+        250,
+        "quest_completion",
+        {"quest_id": "main_quest_01"},
+    )
     
     game.save_game(create_checkpoint=True, checkpoint_name="week_1")
     
@@ -423,7 +484,7 @@ def run_example_scenario():
     print("\n📌 SCENARIO 3: Failed Transaction (Insufficient Funds)")
     print("-"*40)
     
-    success = game.process_transaction("player_003", "Premium", -100, "ExpensiveItem")
+    success = game.process_transaction(player_3, "gems", -100, "expensive_item")
     if not success:
         print("  Transaction failed as expected")
     
@@ -431,8 +492,8 @@ def run_example_scenario():
     print("\n📌 SCENARIO 4: Coaching Credit Cap")
     print("-"*40)
     
-    game.process_transaction("player_001", "CoachingCredit", 50, "AchievementReward")
-    game.process_transaction("player_001", "CoachingCredit", 60, "BonusReward")  
+    game.process_transaction(player_1, "credits", 50, "achievement_reward")
+    game.process_transaction(player_1, "credits", 60, "bonus_reward")
     
     game.print_economy_summary()
     
@@ -441,12 +502,13 @@ def run_example_scenario():
     print("-"*40)
     
     print("\n🎯 Making a large transaction...")
-    game.process_transaction("player_002", "Soft", -1000, "MajorPurchase")
+    game.process_transaction(player_2, "coins", -1000, "major_purchase")
     
     print("\n🔄 Rolling back the transaction...")
     if game.rollback_last_transaction():
         print("  Rollback successful!")
-        print(f"  Player 002 balance restored: {game.get_player_balance('player_002')['Soft']}")
+        restored = game.get_player_balance(player_2)["current_balances"]["coins"]
+        print(f"  Player 2 balance restored: {restored}")
     
     # Scenario 6: Save and reload
     print("\n📌 SCENARIO 6: Save and Reload")

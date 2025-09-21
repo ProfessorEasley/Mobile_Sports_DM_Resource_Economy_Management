@@ -14,7 +14,18 @@ import matplotlib.patches as mpatches
 from matplotlib.gridspec import GridSpec
 import numpy as np
 
-from economic_dashboard_phase3 import EconomicMonitoringSystem, AlertLevel
+from economic_dashboard_phase3 import EconomicMonitoringSystem, AlertLevel, TRACKED_CURRENCIES
+
+CURRENCY_ALIAS = {
+    "Soft": "coins",
+    "Premium": "gems",
+    "Utility": "credits",
+    "CoachingCredit": "credits",
+}
+
+
+def normalize_currency(value: str) -> str:
+    return CURRENCY_ALIAS.get(value, value).lower()
 
 
 class DashboardVisualizer:
@@ -29,13 +40,12 @@ class DashboardVisualizer:
     
     def generate_inflation_chart(self, save_path: str = None):
         """Generate inflation trend chart for all currencies"""
-        fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+        fig, axes = plt.subplots(1, len(TRACKED_CURRENCIES), figsize=(14, 5))
         fig.suptitle('Currency Inflation Trends', fontsize=16, fontweight='bold')
         
-        currencies = ["Soft", "Premium", "Utility", "CoachingCredit"]
-        colors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4']
+        colors = ['#FF6B6B', '#4ECDC4', '#45B7D1']
         
-        for idx, (ax, currency, color) in enumerate(zip(axes.flat, currencies, colors)):
+        for ax, currency, color in zip(axes, TRACKED_CURRENCIES, colors):
             inflation_data = self.monitor.metrics.inflation_rates.get(currency, [])
             
             if inflation_data:
@@ -47,7 +57,7 @@ class DashboardVisualizer:
                 ax.axhline(y=30, color='red', linestyle='--', alpha=0.7, label='Critical Threshold')
                 ax.fill_between(range(len(rates)), rates, alpha=0.3, color=color)
             
-            ax.set_title(f'{currency} Currency', fontweight='bold')
+            ax.set_title(f'{currency.title()} Currency', fontweight='bold')
             ax.set_xlabel('Time Period')
             ax.set_ylabel('Inflation Rate (%)')
             ax.grid(True, alpha=0.3)
@@ -285,17 +295,17 @@ class DashboardVisualizer:
         fig, ax = plt.subplots(figsize=(14, 8))
         fig.suptitle('Weekly Currency Delta Trends', fontsize=16, fontweight='bold')
         
-        currencies = ["Soft", "Premium", "Utility", "CoachingCredit"]
-        colors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4']
-        markers = ['o', 's', '^', 'D']
+        currencies = TRACKED_CURRENCIES
+        colors = ['#FF6B6B', '#4ECDC4', '#45B7D1']
+        markers = ['o', 's', '^']
         
         weeks = sorted(self.monitor.metrics.weekly_deltas.keys())
         
         if weeks:
             for currency, color, marker in zip(currencies, colors, markers):
                 deltas = [self.monitor.metrics.weekly_deltas[week].get(currency, 0) for week in weeks]
-                ax.plot(weeks, deltas, color=color, marker=marker, 
-                       linewidth=2, markersize=8, label=currency, alpha=0.8)
+                ax.plot(weeks, deltas, color=color, marker=marker,
+                       linewidth=2, markersize=8, label=currency.title(), alpha=0.8)
             
             ax.axhline(y=0, color='black', linestyle='-', linewidth=1, alpha=0.5)
             ax.set_xlabel('Week Number', fontsize=12)
@@ -308,10 +318,10 @@ class DashboardVisualizer:
             ax.fill_between(weeks, 0, ax.get_ylim()[1], alpha=0.1, color='green', label='Inflation Zone')
             ax.fill_between(weeks, ax.get_ylim()[0], 0, alpha=0.1, color='red', label='Deflation Zone')
             
-            for currency, deltas in zip(currencies, [
-                [self.monitor.metrics.weekly_deltas[week].get(currency, 0) for week in weeks]
-                for currency in currencies
-            ]):
+            for currency, deltas in zip(
+                currencies,
+                [[self.monitor.metrics.weekly_deltas[week].get(currency, 0) for week in weeks] for currency in currencies],
+            ):
                 if len(deltas) >= 2:
                     max_delta_idx = deltas.index(max(deltas))
                     min_delta_idx = deltas.index(min(deltas))
@@ -561,7 +571,7 @@ class ExtendedTestingSuite:
         
         # Check scarcity detection
         heatmap = self.monitor.metrics.generate_resource_scarcity_heatmap()
-        scarcity_pct = heatmap.get("Soft", {}).get("scarcity_percentage", 0)
+        scarcity_pct = heatmap.get(normalize_currency("Soft"), {}).get("scarcity_percentage", 0)
         
         return {
             "test": "scarcity_detection",
