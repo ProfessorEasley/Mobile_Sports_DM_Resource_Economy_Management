@@ -8,10 +8,6 @@ def compute_forecast(request):
         balance += net
         output.append({
             "week": week,
-            "income": request.income,
-            "salary": request.salary,
-            "bonus": bonus,
-            "expenses": expense,
             "net_change": net,
             "balance": balance
         })
