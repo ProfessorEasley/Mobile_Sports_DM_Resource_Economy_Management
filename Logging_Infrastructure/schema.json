@@ -1,149 +1,299 @@
 {
-    "title": "FMG Audit Log Entry",
-    "type": "object",
-    "additionalProperties": false,
-    "required": [
-      "id",
-      "ts",
-      "player_id",
-      "currency",
-      "action",
-      "amount",
-      "balance_before",
-      "balance_after",
-      "source",
-      "meta"
-    ],
-    "properties": {
-      "id": {
-        "description": "Unique identifier for this log entry",
-        "type": "string",
-        "format": "uuid"
-      },
-      "correlation_id": {
-        "description": "Correlates multiple log entries in one higher-level operation (e.g., salary run).",
-        "type": "string",
-        "format": "uuid"
-      },
-      "session_id": {
-        "description": "Local gameplay session identifier (offline).",
-        "type": "string"
-      },
-      "ts": {
-        "description": "Timestamp in ISO 8601 (UTC).",
-        "type": "string",
-        "format": "date-time"
-      },
-      "player_id": {
-        "description": "Player identifier.",
-        "type": "string",
-        "minLength": 1
-      },
-      "currency": {
-        "description": "Impacted currency type.",
-        "type": "string",
-        "enum": ["Soft", "Premium", "Utility", "CoachingCredit"]
-      },
-      "action": {
-        "description": "Economic action performed.",
-        "type": "string",
-        "enum": ["EARN", "SPEND", "TRANSFER_IN", "TRANSFER_OUT", "ADJUST"]
-      },
-      "amount": {
-        "description": "Non-negative amount for the action.",
-        "type": "number",
-        "minimum": 0
-      },
-      "balance_before": {
-        "description": "Balance immediately before applying the action.",
-        "type": "number"
-      },
-      "balance_after": {
-        "description": "Balance immediately after applying the action (after cap/rollback).",
-        "type": "number"
-      },
-      "source": {
-        "description": "Originating subsystem for this event.",
-        "type": "string",
-        "enum": ["WalletSystem", "SalaryEngine", "ContractSystem", "BonusSystem", "AdminTool", "TestHarness"]
-      },
-      "reason": {
-        "description": "Human-readable reason or category (e.g., match-win, daily-login).",
-        "type": "string"
-      },
-      "meta": {
-        "description": "Freeform metadata for analytics; MUST be JSON-serializable.",
-        "type": "object",
-        "additionalProperties": true
-      },
-  
-      "cap_info": {
-        "description": "Present when CoachingCredit (or other capped currency) was capped.",
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["cap_reached", "cap_value", "excess_amount_discarded"],
-        "properties": {
-          "cap_reached": { "type": "boolean" },
-          "cap_value": { "type": "number", "minimum": 0 },
-          "excess_amount_discarded": { "type": "number", "minimum": 0 }
-        }
-      },
-  
-      "rollback": {
-        "description": "Rollback context if the operation failed and was reverted locally.",
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["applied"],
-        "properties": {
-          "applied": { "type": "boolean" },
-          "reason": { "type": "string" },
-          "prev_state_hash": {
-            "description": "Hash of prior persisted state (for forensic cross-checks).",
-            "type": "string"
+  "title": "Economy Data Payload",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "wallet_management",
+    "transaction_history",
+    "economy_forecasting",
+    "economy_health"
+  ],
+  "properties": {
+    "wallet_management": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "player_id",
+        "current_balances",
+        "max_capacities",
+        "earn_rates"
+      ],
+      "properties": {
+        "player_id": {
+          "description": "Unique player identifier in UUID format.",
+          "type": "string",
+          "format": "uuid"
+        },
+        "current_balances": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "coins",
+            "gems",
+            "credits"
+          ],
+          "properties": {
+            "coins": { "type": "integer" },
+            "gems": { "type": "integer" },
+            "credits": { "type": "integer" }
           }
-        }
-      },
-  
-      "integrity": {
-        "description": "Optional write-integrity info for offline persistence.",
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-          "file_seq": { "type": "integer", "minimum": 0 },
-          "checksum": { "type": "string" },
-          "schema_version": { "type": "string", "pattern": "^v\\d+\\.\\d+\\.\\d+$" }
+        },
+        "max_capacities": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "coins",
+            "gems",
+            "credits"
+          ],
+          "properties": {
+            "coins": { "type": "integer" },
+            "gems": { "type": "integer" },
+            "credits": { "type": "integer" }
+          }
+        },
+        "earn_rates": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "coins_per_hour",
+            "gems_per_day",
+            "credits_per_week"
+          ],
+          "properties": {
+            "coins_per_hour": { "type": "integer" },
+            "gems_per_day": { "type": "integer" },
+            "credits_per_week": { "type": "integer" }
+          }
         }
       }
     },
-    "allOf": [
-      {
-        "if": { "properties": { "currency": { "const": "CoachingCredit" } } },
-        "then": {
-          "properties": {
-            "cap_info": { "type": "object" }
+    "transaction_history": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "transaction_id",
+          "player_id",
+          "currency",
+          "type",
+          "amount",
+          "source",
+          "timestamp",
+          "new_balance"
+        ],
+        "properties": {
+          "transaction_id": {
+            "description": "Unique identifier for the transaction.",
+            "type": "string",
+            "format": "uuid"
+          },
+          "player_id": {
+            "description": "Player identifier associated with the transaction.",
+            "type": "string",
+            "format": "uuid"
+          },
+          "currency": {
+            "description": "Currency impacted by this transaction.",
+            "type": "string"
+          },
+          "type": {
+            "description": "Transaction type.",
+            "type": "string",
+            "enum": [
+              "earn",
+              "spend"
+            ]
+          },
+          "amount": {
+            "description": "Non-negative amount processed.",
+            "type": "integer",
+            "minimum": 0
+          },
+          "source": {
+            "description": "Origin of the transaction event.",
+            "type": "string",
+            "enum": [
+              "coach_hiring",
+              "match_win",
+              "pack_purchase"
+            ]
+          },
+          "timestamp": {
+            "description": "Timestamp in ISO-8601 format (UTC).",
+            "type": "string",
+            "format": "date-time"
+          },
+          "new_balance": {
+            "description": "Balance immediately after this transaction.",
+            "type": "integer"
           }
         }
       }
-    ],
-    "examples": [
-      {
-        "id": "d8f5b9b6-6b6b-4c6e-a7d1-0d6a9c2f7c2a",
-        "correlation_id": "a2f7c7f4-8cf6-4a6c-9a2f-6c0a1e4c9f10",
-        "session_id": "sess_2025-08-24_17-10-02",
-        "ts": "2025-08-24T00:10:02Z",
-        "player_id": "player_014",
-        "currency": "CoachingCredit",
-        "action": "EARN",
-        "amount": 15,
-        "balance_before": 95,
-        "balance_after": 100,
-        "source": "BonusSystem",
-        "reason": "WeeklyPerformance",
-        "meta": { "match_id": "M-99123", "week": 1 },
-        "cap_info": { "cap_reached": true, "cap_value": 100, "excess_amount_discarded": 10 },
-        "rollback": { "applied": false },
-        "integrity": { "file_seq": 1024, "checksum": "sha256:...", "schema_version": "v1.0.0" }
+    },
+    "economy_forecasting": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "player_id",
+        "current_balance",
+        "weeks",
+        "salary",
+        "income",
+        "bonuses",
+        "expenses",
+        "forecast",
+        "alerts"
+      ],
+      "properties": {
+        "player_id": {
+          "description": "Player identifier for the forecast package.",
+          "type": "string",
+          "format": "uuid"
+        },
+        "current_balance": { "type": "integer" },
+        "weeks": { "type": "integer", "minimum": 1 },
+        "salary": { "type": "integer" },
+        "income": { "type": "integer" },
+        "bonuses": {
+          "type": "object",
+          "propertyNames": {
+            "pattern": "^week_\\d+$"
+          },
+          "additionalProperties": {
+            "type": "integer"
+          }
+        },
+        "expenses": {
+          "type": "object",
+          "propertyNames": {
+            "pattern": "^week_\\d+$"
+          },
+          "additionalProperties": {
+            "type": "integer"
+          }
+        },
+        "forecast": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "week",
+              "balance",
+              "net_change"
+            ],
+            "properties": {
+              "week": { "type": "integer", "minimum": 1 },
+              "balance": { "type": "integer" },
+              "net_change": { "type": "integer" }
+            }
+          }
+        },
+        "alerts": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
       }
-    ]
-  }
-  
+    },
+    "economy_health": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "player_id",
+        "balance_status",
+        "next_failure_week",
+        "suggestions"
+      ],
+      "properties": {
+        "player_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "balance_status": {
+          "type": "string",
+          "enum": [
+            "healthy",
+            "at_risk",
+            "critical"
+          ]
+        },
+        "next_failure_week": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "suggestions": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    }
+  },
+  "examples": [
+    {
+      "wallet_management": {
+        "player_id": "0b363705-6a2d-4a12-a2b9-9fd012345678",
+        "current_balances": {
+          "coins": 1250,
+          "gems": 45,
+          "credits": 18
+        },
+        "max_capacities": {
+          "coins": 5000,
+          "gems": 200,
+          "credits": 100
+        },
+        "earn_rates": {
+          "coins_per_hour": 120,
+          "gems_per_day": 3,
+          "credits_per_week": 8
+        }
+      },
+      "transaction_history": [
+        {
+          "transaction_id": "7a2a3ad6-5c9e-4bc5-9aa8-24fa12345678",
+          "player_id": "0b363705-6a2d-4a12-a2b9-9fd012345678",
+          "currency": "coins",
+          "type": "earn",
+          "amount": 250,
+          "source": "match_win",
+          "timestamp": "2025-08-24T00:10:02Z",
+          "new_balance": 1500
+        }
+      ],
+      "economy_forecasting": {
+        "player_id": "0b363705-6a2d-4a12-a2b9-9fd012345678",
+        "current_balance": 1500,
+        "weeks": 4,
+        "salary": 400,
+        "income": 650,
+        "bonuses": {
+          "week_2": 120
+        },
+        "expenses": {
+          "week_3": 200
+        },
+        "forecast": [
+          {
+            "week": 1,
+            "balance": 1750,
+            "net_change": 250
+          }
+        ],
+        "alerts": [
+          "Week 3: Balance dropped below 50"
+        ]
+      },
+      "economy_health": {
+        "player_id": "0b363705-6a2d-4a12-a2b9-9fd012345678",
+        "balance_status": "healthy",
+        "next_failure_week": 0,
+        "suggestions": [
+          "Increase premium sinks",
+          "Monitor coaching credit cap"
+        ]
+      }
+    }
+  ]
+}
