@@ -65,3 +65,19 @@ def test_display_wallet_by_username():
     assert data["coins"] == pytest.approx(100)
     assert data["gems"] == pytest.approx(10)
     assert data["credits"] == pytest.approx(50)
+
+def test_display_wallet_unknown_player():
+    response = client.get("/wallet/display", params={"player_id": "ghost_player"}, headers=AUTH_HEADER)
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Player not found"
+
+def test_display_wallet_missing_wallet_record():
+    with Session(bind=engine) as db:
+        wallet = db.query(Wallet).join(User).filter(User.username == "testuser").first()
+        if wallet:
+            db.delete(wallet)
+            db.commit()
+
+    response = client.get("/wallet/display", headers=AUTH_HEADER)
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Wallet not found"
