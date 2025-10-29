@@ -53,55 +53,55 @@ class WalletService:
         if currency_type not in VALID_CURRENCIES or amount < 1:
             return False
 
-        with self.db.begin():
-            wallet = self.db.query(Wallet).filter_by(user_id=user_id).first()
+        wallet = self.db.query(Wallet).filter_by(user_id=user_id).first()
 
-            if not wallet:
-                wallet = Wallet(user_id=user_id, coins=0, gems=0, credits=0)
-                self.db.add(wallet)
-                self.db.flush()  # check if wallet.id is populated for the audit log
+        if not wallet:
+            wallet = Wallet(user_id=user_id, coins=0, gems=0, credits=0)
+            self.db.add(wallet)
+            self.db.flush() 
 
-            current_value = getattr(wallet, currency_type, 0)
-            setattr(wallet, currency_type, current_value + amount)
+        current_value = getattr(wallet, currency_type, 0)
+        setattr(wallet, currency_type, current_value + amount)
 
-            self.db.add(
-                AuditLog(
-                    user_id=user_id,
-                    wallet_id=wallet.id,
-                    currency_type=currency_type,
-                    operation="add",
-                    amount=amount,
-                    balance_after=getattr(wallet, currency_type),
-                    meta=None,
-                )
+        self.db.add(
+            AuditLog(
+                user_id=user_id,
+                wallet_id=wallet.id,
+                currency_type=currency_type,
+                operation="add",
+                amount=amount,
+                balance_after=getattr(wallet, currency_type),
+                meta=None,
             )
+        )
+        self.db.commit() 
         return True
+
 
     def spend_currency(self, user_id: int, currency_type: str, amount: int) -> bool:
         if currency_type not in VALID_CURRENCIES or amount < 1:
             return False
 
-        with self.db.begin():
-            wallet = self.db.query(Wallet).filter_by(user_id=user_id).first()
+        wallet = self.db.query(Wallet).filter_by(user_id=user_id).first()
+        if not wallet:
+            return False
 
-            if not wallet:
-                return False
+        current_balance = getattr(wallet, currency_type, None)
+        if current_balance is None or current_balance < amount:
+            return False
 
-            current_balance = getattr(wallet, currency_type, None)
-            if current_balance is None or current_balance < amount:
-                return False
+        setattr(wallet, currency_type, current_balance - amount)
 
-            setattr(wallet, currency_type, current_balance - amount)
-
-            self.db.add(
-                AuditLog(
-                    user_id=user_id,
-                    wallet_id=wallet.id,
-                    currency_type=currency_type,
-                    operation="spend",
-                    amount=amount,
-                    balance_after=getattr(wallet, currency_type),
-                    meta=None,
-                )
+        self.db.add(
+            AuditLog(
+                user_id=user_id,
+                wallet_id=wallet.id,
+                currency_type=currency_type,
+                operation="spend",
+                amount=amount,
+                balance_after=getattr(wallet, currency_type),
+                meta=None,
             )
+        )
+        self.db.commit()  
         return True
