@@ -1,193 +1,203 @@
-"""
-Lead Salary Engine: Handles salary calculations, performance bonuses, and weekly payouts
-with external contract trigger integration.
-"""
-from typing import Dict, List, Optional
-from datetime import datetime, timedelta
+from __future__ import annotations
+
+from dataclasses import dataclass
 from decimal import Decimal
-from sqlalchemy.orm import Session
+from typing import Dict, List, Optional
+
 from sqlalchemy import select
-from ..models import User, Wallet, AuditLog
+from sqlalchemy.orm import Session
 
+from ..models import Wallet, AuditLog
+
+
+@dataclass(frozen=True)
 class PerformanceMetrics:
-    """Performance metrics for bonus calculations"""
-    def __init__(self, leads_generated: int = 0, conversion_rate: float = 0.0, 
-                 quality_score: float = 0.0, team_performance: float = 0.0):
-        self.leads_generated = leads_generated
-        self.conversion_rate = conversion_rate  # 0.0 to 1.0
-        self.quality_score = quality_score      # 0.0 to 100.0
-        self.team_performance = team_performance # 0.0 to 100.0
+    leads_generated: int = 0
+    conversion_rate: float = 0.0  # 0.0 to 1.0
+    quality_score: float = 0.0    # 0.0 to 100.0
+    team_performance: float = 0.0 # 0.0 to 100.0
 
+
+@dataclass(frozen=True)
 class SalaryContract:
-    """External contract configuration for salary calculations"""
-    def __init__(self, user_id: str, base_salary: Decimal, bonus_multiplier: float = 1.0,
-                 performance_threshold: float = 0.75, max_bonus_percentage: float = 0.5):
-        self.user_id = user_id
-        self.base_salary = base_salary
-        self.bonus_multiplier = bonus_multiplier
-        self.performance_threshold = performance_threshold
-        self.max_bonus_percentage = max_bonus_percentage
+    player_id: str
+    base_salary: Decimal
+    bonus_multiplier: float = 1.0
+    performance_threshold: float = 0.75
+    max_bonus_percentage: float = 0.5
 
-class LeadSalaryEngine:
+
+class SalaryEngine:
+    _contracts_store: Dict[str, SalaryContract] = {}  # shared across instances
+
     def __init__(self, db: Session):
         self.db = db
-        self.contracts: Dict[str, SalaryContract] = {}
+        self.contracts = SalaryEngine._contracts_store
         self._load_sample_contracts()
-    
-    def _load_sample_contracts(self):
-        """Load sample contracts for demonstration"""
-        self.contracts = {
-            "testuser": SalaryContract(
-                user_id="testuser",
+
+    def _load_sample_contracts(self) -> None:
+        if "lead_001" not in self.contracts:
+            self.contracts["lead_001"] = SalaryContract(
+                player_id="lead_001",
                 base_salary=Decimal("5000.00"),
                 bonus_multiplier=1.2,
-                performance_threshold=0.8,
-                max_bonus_percentage=0.4
-            ),
-            "lead_agent_1": SalaryContract(
-                user_id="lead_agent_1",
-                base_salary=Decimal("4500.00"),
-                bonus_multiplier=1.1,
                 performance_threshold=0.75,
-                max_bonus_percentage=0.35
+                max_bonus_percentage=0.5,
             )
+
+    @staticmethod
+    def _normalize_player_id(player_id: str) -> str:
+        return str(player_id).strip()
+
+    def register_contract(self, contract: SalaryContract) -> bool:
+        try:
+            pid = self._normalize_player_id(contract.player_id)
+            self.contracts[pid] = SalaryContract(
+                player_id=pid,
+                base_salary=contract.base_salary,
+                bonus_multiplier=contract.bonus_multiplier,
+                performance_threshold=contract.performance_threshold,
+                max_bonus_percentage=contract.max_bonus_percentage,
+            )
+            return True
+        except Exception:
+            return False
+
+    def get_contract_details(self, player_id: str) -> Optional[Dict]:
+        pid = self._normalize_player_id(player_id)
+        c = self.contracts.get(pid)
+        if not c:
+            return None
+        return {
+            "player_id": c.player_id,
+            "base_salary": float(c.base_salary),
+            "bonus_multiplier": c.bonus_multiplier,
+            "performance_threshold": c.performance_threshold,
+            "max_bonus_percentage": c.max_bonus_percentage,
         }
-    
-    def register_contract(self, contract: SalaryContract):
-        """Register a new salary contract"""
-        self.contracts[contract.user_id] = contract
-        print(f"Contract registered for user {contract.user_id} with base salary ${contract.base_salary}")
-    
-    def calculate_performance_bonus(self, user_id: str, metrics: PerformanceMetrics) -> Decimal:
-        """Calculate performance bonus based on metrics"""
-        contract = self.contracts.get(user_id)
-        if not contract:
-            return Decimal("0.00")
-        
-        # Weighted performance score calculation
-        performance_score = (
-            (metrics.leads_generated * 0.3) +
-            (metrics.conversion_rate * 100 * 0.3) +
-            (metrics.quality_score * 0.25) +
-            (metrics.team_performance * 0.15)
-        ) / 100.0
-        
-        # Apply performance threshold
-        if performance_score < contract.performance_threshold:
-            return Decimal("0.00")
-        
-        # Calculate bonus percentage
-        bonus_percentage = min(
-            performance_score * contract.bonus_multiplier * contract.max_bonus_percentage,
-            contract.max_bonus_percentage
+
+    def _calculate_metrics_score(self, metrics: PerformanceMetrics) -> float:
+        leads_score = min(metrics.leads_generated / 100.0, 1.0)
+        conversion_score = max(0.0, min(metrics.conversion_rate, 1.0))
+        quality_score = max(0.0, min(metrics.quality_score, 100.0)) / 100.0
+        team_score = max(0.0, min(metrics.team_performance, 100.0)) / 100.0
+
+        return (
+            leads_score * 0.3
+            + conversion_score * 0.3
+            + quality_score * 0.25
+            + team_score * 0.15
         )
-        
-        bonus_amount = contract.base_salary * Decimal(str(bonus_percentage))
-        return bonus_amount.quantize(Decimal('0.01'))
-    
-    def calculate_weekly_payout(self, user_id: str, metrics: PerformanceMetrics) -> Dict[str, Decimal]:
-        """Calculate weekly payout including base salary and performance bonus"""
-        contract = self.contracts.get(user_id)
+
+    def calculate_performance_bonus(self, player_id: str, metrics: PerformanceMetrics) -> Decimal:
+        pid = self._normalize_player_id(player_id)
+        contract = self.contracts.get(pid)
         if not contract:
-            return {"base_salary": Decimal("0.00"), "performance_bonus": Decimal("0.00"), "total": Decimal("0.00")}
-        
-        # Weekly base salary (assuming monthly salary / 4)
-        weekly_base = (contract.base_salary / 4).quantize(Decimal('0.01'))
-        
-        # Calculate performance bonus
-        performance_bonus = self.calculate_performance_bonus(user_id, metrics)
-        
-        # Weekly performance bonus (distribute over 4 weeks)
-        weekly_bonus = (performance_bonus / 4).quantize(Decimal('0.01'))
-        
-        total_payout = weekly_base + weekly_bonus
-        
+            raise ValueError(f"No salary contract found for player_id={pid}")
+
+        score = self._calculate_metrics_score(metrics)
+        if score < contract.performance_threshold:
+            return Decimal("0.00")
+
+        bonus_pct = min(
+            score * contract.bonus_multiplier * contract.max_bonus_percentage,
+            contract.max_bonus_percentage,
+        )
+        bonus_amount = (contract.base_salary * Decimal(str(bonus_pct))).quantize(Decimal("0.01"))
+        return bonus_amount
+
+    def calculate_weekly_salary_cost(self, player_id: str, metrics: PerformanceMetrics) -> Dict[str, Decimal]:
+        pid = self._normalize_player_id(player_id)
+        contract = self.contracts.get(pid)
+        if not contract:
+            raise ValueError(f"No salary contract found for player_id={pid}")
+
+        weekly_base = (contract.base_salary / Decimal("4")).quantize(Decimal("0.01"))
+        performance_bonus = self.calculate_performance_bonus(pid, metrics)
+        weekly_bonus = (performance_bonus / Decimal("4")).quantize(Decimal("0.01"))
+        total_weekly = (weekly_base + weekly_bonus).quantize(Decimal("0.01"))
+        metrics_score = Decimal(str(self._calculate_metrics_score(metrics))).quantize(Decimal("0.001"))
+
         return {
             "base_salary": weekly_base,
             "performance_bonus": weekly_bonus,
-            "total": total_payout,
-            "metrics_score": self._calculate_metrics_score(metrics)
+            "total": total_weekly,
+            "metrics_score": metrics_score,
         }
-    
-    def _calculate_metrics_score(self, metrics: PerformanceMetrics) -> float:
-        """Calculate overall metrics score for reporting"""
-        return (
-            (metrics.leads_generated * 0.3) +
-            (metrics.conversion_rate * 100 * 0.3) +
-            (metrics.quality_score * 0.25) +
-            (metrics.team_performance * 0.15)
-        ) / 100.0
-    
-    def trigger_weekly_payout(self, user_id: str, metrics: PerformanceMetrics) -> bool:
-        """Trigger weekly payout and update wallet"""
-        try:
-            payout_details = self.calculate_weekly_payout(user_id, metrics)
-            
-            # Get or create wallet for user
-            wallet = self.db.execute(
-                select(Wallet).where(Wallet.user_id == user_id)
-            ).scalar_one_or_none()
-            
-            if not wallet:
-                # Create dummy wallet if not exists
-                wallet = Wallet(user_id=user_id, coins=0, gems=0, credits=0)
-                self.db.add(wallet)
-                self.db.commit()
-                self.db.refresh(wallet)
-            
-            # Add salary as credits to wallet
-            total_credits = int(payout_details["total"])
-            wallet.credits += total_credits
-            
-            # Create audit log for salary payout
-            audit_log = AuditLog(
-                user_id=user_id,
-                wallet_id=wallet.id,
-                currency_type="credits",
-                operation="salary_payout",
-                amount=total_credits,
-                balance_after=wallet.credits,
-                meta=f"Weekly payout - Base: ${payout_details['base_salary']}, Bonus: ${payout_details['performance_bonus']}"
-            )
-            self.db.add(audit_log)
+
+    def apply_weekly_salary_deduction(
+        self,
+        player_id: str,
+        fallback_user_id: int,
+        metrics: PerformanceMetrics,
+    ) -> Dict[str, object]:
+        
+        details = self.calculate_weekly_salary_cost(player_id, metrics)
+        total_cost_coins = int(details["total"])
+
+        wallet = self.db.execute(
+            select(Wallet).where(Wallet.user_id == fallback_user_id)
+        ).scalar_one_or_none()
+
+        if not wallet:
+            wallet = Wallet(user_id=fallback_user_id, coins=0, gems=0, credits=0)
+            self.db.add(wallet)
             self.db.commit()
-            
-            print(f"Weekly payout processed for {user_id}: ${payout_details['total']} (Base: ${payout_details['base_salary']}, Bonus: ${payout_details['performance_bonus']})")
-            return True
-            
-        except Exception as e:
-            print(f"Error processing payout for {user_id}: {str(e)}")
+            self.db.refresh(wallet)
+
+        if wallet.coins < total_cost_coins:
             self.db.rollback()
-            return False
-    
-    def get_contract_details(self, user_id: str) -> Optional[Dict]:
-        """Get contract details for a user"""
-        contract = self.contracts.get(user_id)
-        if not contract:
-            return None
-        
+            return {
+                "ok": False,
+                "reason": "insufficient_funds",
+                "new_balance": int(wallet.coins),
+                "details": details,
+            }
+
+        wallet.coins -= total_cost_coins
+        new_balance = int(wallet.coins)
+
+        audit = AuditLog(
+            user_id=fallback_user_id,
+            wallet_id=wallet.id,
+            currency_type="coins",
+            operation="salary_deduction",
+            amount=total_cost_coins,
+            balance_after=new_balance,
+            meta={
+                "player_id": str(player_id),
+                "base_salary_weekly": str(details["base_salary"]),
+                "performance_bonus_weekly": str(details["performance_bonus"]),
+                "metrics_score": str(details["metrics_score"]),
+            },
+        )
+        self.db.add(audit)
+        self.db.commit()
+
         return {
-            "user_id": contract.user_id,
-            "base_salary": float(contract.base_salary),
-            "bonus_multiplier": contract.bonus_multiplier,
-            "performance_threshold": contract.performance_threshold,
-            "max_bonus_percentage": contract.max_bonus_percentage
+            "ok": True,
+            "new_balance": new_balance,
+            "details": details,
         }
-    
-    def process_bulk_payouts(self, payout_data: List[Dict]) -> Dict[str, bool]:
-        """Process multiple payouts in bulk (external contract trigger simulation)"""
-        results = {}
-        
-        for data in payout_data:
-            user_id = data.get("user_id")
+
+    def process_bulk_salary_deductions(
+        self,
+        items: List[Dict],
+        fallback_user_id: int,
+    ) -> Dict[str, bool]:
+
+        results: Dict[str, bool] = {}
+        for item in items:
+            pid = self._normalize_player_id(item.get("player_id", ""))
             metrics = PerformanceMetrics(
-                leads_generated=data.get("leads_generated", 0),
-                conversion_rate=data.get("conversion_rate", 0.0),
-                quality_score=data.get("quality_score", 0.0),
-                team_performance=data.get("team_performance", 0.0)
+                leads_generated=int(item.get("leads_generated", 0)),
+                conversion_rate=float(item.get("conversion_rate", 0.0)),
+                quality_score=float(item.get("quality_score", 0.0)),
+                team_performance=float(item.get("team_performance", 0.0)),
             )
-            
-            success = self.trigger_weekly_payout(user_id, metrics)
-            results[user_id] = success
-        
+            try:
+                res = self.apply_weekly_salary_deduction(pid, fallback_user_id, metrics)
+                results[pid] = bool(res.get("ok"))
+            except Exception:
+                results[pid] = False
         return results
