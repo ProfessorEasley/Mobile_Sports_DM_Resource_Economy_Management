@@ -5,7 +5,6 @@
   "required": [
     "wallet_management",
     "transaction_history",
-    "economy_forecasting",
     "economy_health"
   ],
   "properties": {
@@ -132,71 +131,6 @@
         }
       }
     },
-    "economy_forecasting": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "player_id",
-        "current_balance",
-        "weeks",
-        "salary",
-        "income",
-        "bonuses",
-        "expenses",
-        "forecast",
-        "alerts"
-      ],
-      "properties": {
-        "player_id": {
-          "description": "Player identifier for the forecast package.",
-          "type": "string",
-          "format": "uuid"
-        },
-        "current_balance": { "type": "integer" },
-        "weeks": { "type": "integer", "minimum": 1 },
-        "salary": { "type": "integer" },
-        "income": { "type": "integer" },
-        "bonuses": {
-          "type": "object",
-          "propertyNames": {
-            "pattern": "^week_\\d+$"
-          },
-          "additionalProperties": {
-            "type": "integer"
-          }
-        },
-        "expenses": {
-          "type": "object",
-          "propertyNames": {
-            "pattern": "^week_\\d+$"
-          },
-          "additionalProperties": {
-            "type": "integer"
-          }
-        },
-        "forecast": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": [
-              "week",
-              "balance",
-              "net_change"
-            ],
-            "properties": {
-              "week": { "type": "integer", "minimum": 1 },
-              "balance": { "type": "integer" },
-              "net_change": { "type": "integer" }
-            }
-          }
-        },
-        "alerts": {
-          "type": "array",
-          "items": { "type": "string" }
-        }
-      }
-    },
     "economy_health": {
       "type": "object",
       "additionalProperties": false,
@@ -262,29 +196,6 @@
           "new_balance": 1500
         }
       ],
-      "economy_forecasting": {
-        "player_id": "0b363705-6a2d-4a12-a2b9-9fd012345678",
-        "current_balance": 1500,
-        "weeks": 4,
-        "salary": 400,
-        "income": 650,
-        "bonuses": {
-          "week_2": 120
-        },
-        "expenses": {
-          "week_3": 200
-        },
-        "forecast": [
-          {
-            "week": 1,
-            "balance": 1750,
-            "net_change": 250
-          }
-        ],
-        "alerts": [
-          "Week 3: Balance dropped below 50"
-        ]
-      },
       "economy_health": {
         "player_id": "0b363705-6a2d-4a12-a2b9-9fd012345678",
         "balance_status": "healthy",

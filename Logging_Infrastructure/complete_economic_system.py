@@ -1,6 +1,7 @@
 import json
 import os
 import shutil
+import uuid
 from datetime import datetime
 from typing import Dict, List, Optional
 import copy
@@ -258,7 +259,7 @@ class IntegratedEconomicSystem:
             self.wallets[player_id][currency_type] -= actual_amount
         
         transaction_data = {
-            "transaction_id": f"txn_{datetime.now().strftime('%Y%m%d%H%M%S')}_{self.metrics['total_transactions']}",
+            "transaction_id": str(uuid.uuid4()),
             "timestamp": datetime.now().isoformat(),
             "player_id": player_id,
             "currency_type": currency_type,
@@ -291,7 +292,7 @@ class IntegratedEconomicSystem:
                                amount: float, source_sink: str, reason: str):
         """Log a failed transaction attempt"""
         transaction_data = {
-            "transaction_id": f"failed_{datetime.now().strftime('%Y%m%d%H%M%S')}",
+            "transaction_id": str(uuid.uuid4()),
             "timestamp": datetime.now().isoformat(),
             "player_id": player_id,
             "currency_type": currency_type,
